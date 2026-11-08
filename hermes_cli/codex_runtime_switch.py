@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -72,6 +73,24 @@ def get_configured_codex_binary(config: dict) -> str:
     model_cfg = config.get("model") if isinstance(config, dict) else None
     value = model_cfg.get("codex_bin") if isinstance(model_cfg, dict) else None
     return str(value or "").strip() or "codex"
+
+
+def get_configured_codex_client(config: dict):
+    """Select a connection factory once per session; subprocess ownership stays the default."""
+    codex = config.get("codex") or {}
+    transport = codex.get("transport", "stdio")
+    if transport == "stdio":
+        return None
+    if transport != "daemon":
+        raise ValueError("codex.transport must be 'stdio' or 'daemon'")
+    from agent.delegation_context import is_dispatcher_owned_worker_context
+    if os.environ.get("HERMES_KANBAN_TASK") and is_dispatcher_owned_worker_context():
+        # Workers need process-scoped MCP credentials and sandbox roots. A shared daemon
+        # cannot inherit those overrides; retain their existing isolated subprocess contract.
+        logger.info("Codex Kanban worker uses stdio for process-scoped configuration")
+        return None
+    from agent.transports.codex_daemon import CodexDaemonClient
+    return functools.partial(CodexDaemonClient, socket_path=codex.get("daemon_socket") or "")
 
 
 def set_runtime(config: dict, new_value: str) -> str:

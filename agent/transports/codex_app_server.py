@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from agent.deadline import kill_process_tree
+from agent.memory_provider import spawn_context_thread
 from agent.transports.hermes_tools_mcp_server import HERMES_TOOLS_MCP_SERVER_NAME
 from tools.environments.local import hermes_subprocess_env
 
@@ -147,6 +148,15 @@ class CodexAppServerClient:
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             bufsize=0, env=spawn_env, creationflags=windows_hide_flags(),
         )
+        self._init_protocol_state()
+
+        self._reader = spawn_context_thread(self._read_stdout, name="codex-stdout")
+        self._stderr_reader = spawn_context_thread(self._read_stderr, name="codex-stderr")
+        self._reader.start()
+        self._stderr_reader.start()
+
+    def _init_protocol_state(self) -> None:
+        """RPC routing shared by owned subprocesses and borrowed daemon connections."""
         self._next_id = 1
         self._pending: dict[int, queue.Queue] = {}  # request id -> single-slot reply queue
         self._pending_lock = threading.Lock()
@@ -156,11 +166,6 @@ class CodexAppServerClient:
         self._stderr_lock = threading.Lock()
         self._closed = False
         self._initialized = False
-
-        self._reader = threading.Thread(target=self._read_stdout, daemon=True)
-        self._stderr_reader = threading.Thread(target=self._read_stderr, daemon=True)
-        self._reader.start()
-        self._stderr_reader.start()
 
     def initialize(
         self, client_name: str = "hermes", client_title: str = "Hermes Agent",

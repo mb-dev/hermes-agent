@@ -245,6 +245,49 @@ model:
 check, native plugin discovery during migration, and the long-lived app-server subprocess.
 The value is a single executable path, not a shell command — no quoting or extra arguments.
 
+## Connect to the shared local Codex daemon
+
+By default Hermes owns a separate `codex app-server` subprocess for each session.
+To use the existing local daemon shared with Codex clients instead:
+
+```bash
+codex app-server daemon start
+hermes config set codex.transport daemon
+```
+
+Keep `model.openai_runtime: codex_app_server` enabled and point `model.codex_bin`
+to the real Codex CLI executable. No wrapper script or proxy process is needed.
+Start a new Hermes session after changing transport settings.
+
+```yaml
+model:
+  provider: openai-codex
+  openai_runtime: codex_app_server
+codex:
+  transport: daemon      # stdio (default) or daemon
+  daemon_socket: ""      # optional explicit local Unix socket path
+```
+
+With an empty `daemon_socket`, Hermes obtains the running daemon's socket path
+from `codex app-server daemon version`. An explicit path connects directly without
+spawning the CLI. This uses the Unix WebSocket transport on macOS and Linux.
+An unavailable daemon produces a connection error; Hermes does not start a second
+server or silently switch transport. Use `hermes config set codex.transport stdio`
+to return to Hermes-owned subprocesses.
+
+Each Hermes session still owns a separate Codex thread. Streaming, tool approvals,
+interrupts, and saved-thread resume use the same RPC protocol as the subprocess
+runtime. Closing Hermes disconnects its client without stopping the daemon or
+other clients.
+
+The daemon uses its own startup environment, login, MCP configuration, and plugins.
+Hermes cannot pass per-process environment variables or startup `-c` overrides to
+an existing daemon. Keep its configuration consistent with the Hermes profile
+using it. After migrating MCP servers, new threads may be needed for discovery.
+Dispatcher-owned Kanban workers retain their isolated stdio subprocesses because
+their scoped MCP environment and sandbox roots cannot be applied to a shared
+server. This connection option does not make Hermes manage unrelated Codex threads.
+
 ## Self-improvement loop (memory + skill nudges)
 
 Hermes' background self-improvement fires on counter thresholds:
